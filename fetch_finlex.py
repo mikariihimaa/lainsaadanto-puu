@@ -2,61 +2,40 @@ import requests
 import xmltodict
 import json
 
-# Finlexin API-endpoint (muuta tarvittaessa)
+# Finlexin API-endpoint (tarkista, että tämä URL toimii selaimessa!)
 FINLEX_API_URL = "https://data.finlex.fi/eli/sd/2018/729/ajantasa"
 
 # 1️⃣ Haetaan XML-data Finlexistä
 response = requests.get(FINLEX_API_URL)
+
+# Tarkistetaan, onnistuiko pyyntö
 if response.status_code != 200:
-    print("Virhe ladattaessa Finlex-dataa")
+    print(f"Virhe ladattaessa Finlex-dataa: HTTP {response.status_code}")
+    print("Palautettu data:")
+    print(response.text[:500])  # Tulostetaan 500 merkkiä saadusta vastauksesta
     exit(1)
 
 xml_data = response.text
 
 # 2️⃣ Muunnetaan XML JSON-muotoon
-parsed_data = xmltodict.parse(xml_data)
+try:
+    parsed_data = xmltodict.parse(xml_data)
+except Exception as e:
+    print("Virhe XML-datan käsittelyssä:", str(e))
+    exit(1)
 
-# 3️⃣ Poimitaan tärkeät osiot (käytetään oikeaa rakennetta)
-law_data = {
-    "name": parsed_data["akomaNtoso"]["act"]["meta"]["identification"]["FRBRWork"]["FRBRalias"]["@value"],
-    "children": []
-}
-
-# Tarkistetaan, missä muodossa lain sisältö on
-body = parsed_data["akomaNtoso"]["act"].get("body", {})
-
-# Käytetään oikeita rakenteita: voi olla 'hcontainer', 'chapter', 'section', 'article'
-containers = body.get("hcontainer", body.get("chapter", body.get("section", body.get("article", []))))
-
-# Jos vain yksi osa, muutetaan se listaksi
-if isinstance(containers, dict):
-    containers = [containers]
-
-# 4️⃣ Rakennetaan hierarkkinen puu
-for item in containers:
-    # Poimitaan otsikko tai käytetään oletusarvoa
-    title = item.get("num", "??") + " " + item.get("heading", "Ei otsikkoa")
-    
-    node = {
-        "name": title,
+# 3️⃣ Poimitaan tärkeät osiot
+try:
+    law_data = {
+        "name": parsed_data["akomaNtoso"]["act"]["meta"]["identification"]["FRBRWork"]["FRBRalias"]["@value"],
         "children": []
     }
-    
-    # Haetaan alaelementit (esim. pykälät, momentit)
-    if "section" in item:
-        sections = item["section"]
-        if isinstance(sections, dict):
-            sections = [sections]
-        
-        for section in sections:
-            node["children"].append({
-                "name": section.get("num", "??") + " § " + section.get("heading", "Ei otsikkoa"),
-                "text": section.get("content", "Ei sisältöä")
-            })
-    
-    law_data["children"].append(node)
+except KeyError:
+    print("XML-datasta ei löytynyt odotettua rakennetta. Tässä näyte saadusta XML:stä:")
+    print(xml_data[:500])
+    exit(1)
 
-# 5️⃣ Tallennetaan JSON-muotoon
+# 4️⃣ Tallennetaan JSON-muotoon
 with open("finlex_data.json", "w", encoding="utf-8") as f:
     json.dump(law_data, f, ensure_ascii=False, indent=4)
 
