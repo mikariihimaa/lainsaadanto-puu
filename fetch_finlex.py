@@ -4,10 +4,9 @@ import json
 import re
 import time
 
-# 🔗 Finlex API-endpoint lakilistaukselle
+# 🔗 Haetaan säädösluettelo Finlexin API:sta
 FINLEX_API_LIST_URL = "https://opendata.finlex.fi/finlex/avoindata/v1/akn/fi/act/statute/list?format=json"
 
-# 1️⃣ Haetaan lakilistauksen JSON
 response = requests.get(FINLEX_API_LIST_URL)
 
 if response.status_code != 200:
@@ -16,26 +15,38 @@ if response.status_code != 200:
 
 laws_list = response.json()
 
-# 🛠️ TULOSTETAAN TESTIMIELESSÄ ENSIMMÄISET 5 SÄÄDÖSTÄ
+# 🛠️ Tulostetaan testimielessä 5 ensimmäistä säädöstä
 print("\n🔍 API palautti seuraavat säädökset:")
 for law in laws_list[:5]:
     print(f" - {law['akn_uri']} (tila: {law['status']})")
 
-# Tarkistetaan, onko tuloksia
+# Tarkistetaan, löytyykö säädöksiä
 if not isinstance(laws_list, list) or len(laws_list) == 0:
     print("❌ Ei löydetty säädöksiä Finlexistä!")
     exit(1)
 
 laws = {}
 
-# 2️⃣ Haetaan yksittäisiä lakeja `akn_uri`-kentän perusteella
+# 2️⃣ Haetaan yksittäisiä lakeja käyttäen `main.xml`-muotoa
 for law in laws_list[:10]:  # Testataan 10 ensimmäistä
-    law_url = law["akn_uri"]
+    if not law["akn_uri"].startswith("https://opendata.finlex.fi/finlex/avoindata/v1/akn/fi/act/statute/"):
+        continue
+
+    # Eristetään säädöksen vuosi ja numero
+    parts = law["akn_uri"].split("/")
+    if len(parts) < 10:
+        continue
+
+    year = parts[10]
+    number = parts[11]
+
+    # Uusi latausosoite (ajantasa XML)
+    law_url = f"https://data.finlex.fi/eli/sd/{year}/{number}/ajantasa/main.xml"
 
     print(f"\n📥 Haetaan laki: {law_url}")
 
     xml_response = requests.get(law_url)
-    time.sleep(1)  # Vältetään liiallista API-kutsujen määrää
+    time.sleep(1)
 
     if xml_response.status_code != 200:
         print(f"⚠️ Virhe ladattaessa lakia {law_url}: HTTP {xml_response.status_code}")
@@ -43,12 +54,12 @@ for law in laws_list[:10]:  # Testataan 10 ensimmäistä
 
     xml_data = xml_response.text
 
-    # 3️⃣ Etsitään lakitekstistä nimi
+    # 3️⃣ Etsitään lakitekstistä nimi (XML:stä)
     try:
         parsed_data = xmltodict.parse(xml_data)
         law_title = parsed_data["akomaNtoso"]["act"]["meta"]["identification"]["FRBRWork"]["FRBRalias"]["@value"]
     except (KeyError, TypeError):
-        law_title = law_url.split("/")[-2]  # Oletusnimi, jos XML-muoto ei ole odotettu
+        law_title = f"{year}/{number}"  # Oletusnimi, jos XML ei sisällä otsikkoa
 
     print(f"📜 Lain nimi: {law_title}")
 
@@ -58,7 +69,7 @@ for law in laws_list[:10]:  # Testataan 10 ensimmäistä
     if not matches:
         print(f"⚠️ Ei viittauksia muihin lakeihin: {law_title}")
 
-    laws[law_url] = {
+    laws[f"{year}/{number}"] = {
         "name": law_title,
         "references": list(set(matches))  
     }
