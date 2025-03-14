@@ -1,0 +1,27 @@
+name: Päivitä Filex-data
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Ajaa joka päivä klo 00:00 UTC (02:00 Suomen aikaa)
+  push:
+    branches:
+      - main  # Voit käynnistää työnkulun myös manuaalisesti tekemällä commitin
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Hae viimeisin repositorio
+        uses: actions/checkout@v3
+
+      - name: Hae Filex-data
+        run: curl -o filex_data.json https://api.avoin.lainsaadanto.fi/filex
+
+      - name: Commit ja push, jos tiedot muuttuivat
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add filex_data.json
+          git commit -m "Päivitetty Filex-data $(date +'%Y-%m-%d')" || exit 0
+          git push
