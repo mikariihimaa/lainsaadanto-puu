@@ -1,14 +1,12 @@
-// Lataa JSON-data Finlexistä
-fetch("finlex_data.json")
+// Lataa JSON-data
+fetch("finlex_tree.json")
     .then(response => response.json())
-    .then(data => {
-        drawTree(data);  // Piirretään puu
-    })
-    .catch(error => console.error("Virhe haettaessa dataa:", error));
+    .then(data => drawTree(data))
+    .catch(error => console.error("Virhe ladattaessa dataa:", error));
 
-// Piirretään puu D3.js:llä
+// Piirretään D3.js-puu
 function drawTree(treeData) {
-    const width = 1000, height = 600;
+    const width = 1200, height = 800;
     const svg = d3.select("body")
                   .append("svg")
                   .attr("width", width)
