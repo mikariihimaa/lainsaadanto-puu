@@ -2,28 +2,48 @@ import requests
 import xmltodict
 import json
 
-# 1️⃣ Haetaan lista säädöksistä Finlexin API:sta
+# Finlexin API-endpoint säädöslistalle
 LISTA_URL = "https://api.finlex.fi/v0/eli/sd/list"
 
+# 1️⃣ Haetaan lista säädöksistä
 response = requests.get(LISTA_URL)
+
+# Tarkistetaan, palauttiko API järkevää sisältöä
 if response.status_code != 200:
     print(f"Virhe ladattaessa säädöslista: HTTP {response.status_code}")
+    print("Palautettu data:")
+    print(response.text[:500])  # Näytä ensimmäiset 500 merkkiä saadusta datasta
     exit(1)
 
-laws_list = response.json()
+# Tarkistetaan, onko vastaus tyhjä
+if not response.text.strip():
+    print("Virhe: Finlex API palautti tyhjän vastauksen!")
+    exit(1)
 
-# 2️⃣ Valitaan ensimmäinen säädös (voit muuttaa logiikkaa valitsemaan tietyn lain)
+try:
+    laws_list = response.json()
+except requests.exceptions.JSONDecodeError:
+    print("Virhe: Finlex API ei palauttanut JSON-dataa! Vastaus:")
+    print(response.text[:500])  # Näytä osa saadusta datasta
+    exit(1)
+
+# 2️⃣ Valitaan ensimmäinen säädös listalta
 if "results" not in laws_list or len(laws_list["results"]) == 0:
-    print("Ei löydetty säädöksiä!")
+    print("Ei löydetty säädöksiä Finlexistä!")
     exit(1)
 
-first_law = laws_list["results"][0]  # Ota ensimmäinen löydetty laki
-law_url = first_law["versions"]["ajantasa"]  # Hae ajantasainen versio
+first_law = laws_list["results"][0]
+law_url = first_law.get("versions", {}).get("ajantasa")
+
+if not law_url:
+    print("Virhe: Ensimmäisellä säädöksellä ei ole ajantasaista versiota.")
+    exit(1)
 
 print(f"Ladataan laki osoitteesta: {law_url}")
 
 # 3️⃣ Haetaan yksittäisen lain XML
 response = requests.get(law_url)
+
 if response.status_code != 200:
     print(f"Virhe ladattaessa lakiteksti: HTTP {response.status_code}")
     exit(1)
