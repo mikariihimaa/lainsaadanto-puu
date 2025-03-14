@@ -1,74 +1,73 @@
 import requests
+import zipfile
+import io
 import xmltodict
 import json
+import re
 
-# Finlexin API-endpoint säädöslistalle
-LISTA_URL = "https://api.finlex.fi/v0/eli/sd/list"
+# 🔗 ZIP-paketin URL (vaihda oikeaan, jos tiedosto on saatavilla)
+FINLEX_ZIP_URL = "https://data.finlex.fi/download/ajantasa/2024/ajantasa.zip"
 
-# 1️⃣ Haetaan lista säädöksistä
-response = requests.get(LISTA_URL)
-
-# Tarkistetaan, palauttiko API järkevää sisältöä
-if response.status_code != 200:
-    print(f"Virhe ladattaessa säädöslista: HTTP {response.status_code}")
-    print("Palautettu data:")
-    print(response.text[:500])  # Näytä ensimmäiset 500 merkkiä saadusta datasta
-    exit(1)
-
-# Tarkistetaan, onko vastaus tyhjä
-if not response.text.strip():
-    print("Virhe: Finlex API palautti tyhjän vastauksen!")
-    exit(1)
-
-try:
-    laws_list = response.json()
-except requests.exceptions.JSONDecodeError:
-    print("Virhe: Finlex API ei palauttanut JSON-dataa! Vastaus:")
-    print(response.text[:500])  # Näytä osa saadusta datasta
-    exit(1)
-
-# 2️⃣ Valitaan ensimmäinen säädös listalta
-if "results" not in laws_list or len(laws_list["results"]) == 0:
-    print("Ei löydetty säädöksiä Finlexistä!")
-    exit(1)
-
-first_law = laws_list["results"][0]
-law_url = first_law.get("versions", {}).get("ajantasa")
-
-if not law_url:
-    print("Virhe: Ensimmäisellä säädöksellä ei ole ajantasaista versiota.")
-    exit(1)
-
-print(f"Ladataan laki osoitteesta: {law_url}")
-
-# 3️⃣ Haetaan yksittäisen lain XML
-response = requests.get(law_url)
+# 1️⃣ Haetaan ZIP-tiedosto
+response = requests.get(FINLEX_ZIP_URL, stream=True)
 
 if response.status_code != 200:
-    print(f"Virhe ladattaessa lakiteksti: HTTP {response.status_code}")
+    print(f"Virhe ladattaessa ZIP-pakettia: HTTP {response.status_code}")
     exit(1)
 
-xml_data = response.text
+zip_file = zipfile.ZipFile(io.BytesIO(response.content))
 
-# 4️⃣ Muunnetaan XML JSON-muotoon
-try:
-    parsed_data = xmltodict.parse(xml_data)
-except Exception as e:
-    print("Virhe XML-datan käsittelyssä:", str(e))
-    exit(1)
+# 2️⃣ Luodaan tyhjä data viittauksille
+laws = {}  # Avain: lakinumero, Arvo: {"name": "Lain nimi", "references": []}
 
-# 5️⃣ Poimitaan tärkeät osiot
-try:
-    law_data = {
-        "name": parsed_data["akomaNtoso"]["act"]["meta"]["identification"]["FRBRWork"]["FRBRalias"]["@value"],
-        "children": []
-    }
-except KeyError:
-    print("XML-datasta ei löytynyt odotettua rakennetta.")
-    exit(1)
+# 3️⃣ Käydään läpi kaikki ZIP-paketin XML-tiedostot
+for xml_filename in zip_file.namelist():
+    if not xml_filename.endswith(".xml"):
+        continue  # Ohitetaan muut tiedostot
+    
+    xml_data = zip_file.read(xml_filename).decode("utf-8")
+    
+    # Parsitaan XML-muotoon
+    try:
+        parsed_data = xmltodict.parse(xml_data)
+    except Exception as e:
+        print(f"Virhe XML-datan käsittelyssä ({xml_filename}):", str(e))
+        continue
+    
+    try:
+        # Haetaan lain nimi ja numero
+        law_name = parsed_data["akomaNtoso"]["act"]["meta"]["identification"]["FRBRWork"]["FRBRalias"]["@value"]
+        law_id = parsed_data["akomaNtoso"]["act"]["meta"]["identification"]["FRBRWork"]["FRBRthis"]["@value"]
+        
+        # Tallennetaan laki listaan
+        laws[law_id] = {"name": law_name, "references": []}
+        
+        # 4️⃣ Etsitään viittaukset muihin lakeihin
+        matches = re.findall(r"\b(\d{4}/\d+)\b", xml_data)  # Etsitään muodot "xxxx/xxx" (esim. 2018/729)
+        
+        for match in matches:
+            if match != law_id:  # Ei lisätä itseensä viittauksia
+                laws[law_id]["references"].append(match)
+    
+    except KeyError:
+        print(f"Virhe: {xml_filename} ei sisällä odotettuja kenttiä.")
+        continue
 
-# 6️⃣ Tallennetaan JSON-muotoon
-with open("finlex_data.json", "w", encoding="utf-8") as f:
-    json.dump(law_data, f, ensure_ascii=False, indent=4)
+# 5️⃣ Muodostetaan JSON-tiedosto puumaiselle rakenteelle
+law_tree = {"name": "Suomen lainsäädäntö", "children": []}
 
-print("Finlex-data päivitetty ja tallennettu JSON-muotoon!")
+# Lisätään kaikki lait pääsolmuksi
+for law_id, law_data in laws.items():
+    law_node = {"name": law_data["name"], "children": []}
+    
+    for ref_id in law_data["references"]:
+        if ref_id in laws:  # Varmistetaan, että viitattu laki on mukana
+            law_node["children"].append({"name": laws[ref_id]["name"]})
+    
+    law_tree["children"].append(law_node)
+
+# Tallennetaan JSON-muodossa
+with open("finlex_tree.json", "w", encoding="utf-8") as f:
+    json.dump(law_tree, f, ensure_ascii=False, indent=4)
+
+print("Lainsäädäntöpuu tallennettu tiedostoon 'finlex_tree.json'!")
